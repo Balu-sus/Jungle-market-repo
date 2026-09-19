@@ -1,0 +1,10 @@
+torch
+torchvision
+opencv-python-headless
+scikit-learn
+pandas
+openpyxl
+numpy
+fastapi
+uvicorn
+
