@@ -1,79 +1,40 @@
-# This workflow will build and push a node.js application to an Azure Web App when a commit is pushed to your default branch.
-#
-# This workflow assumes you have already created the target Azure App Service web app.
-# For instructions see https://docs.microsoft.com/en-us/azure/app-service/quickstart-nodejs?tabs=linux&pivots=development-environment-cli
-#
-# To configure this workflow:
-#
-# 1. Download the Publish Profile for your Azure Web App. You can download this file from the Overview page of your Web App in the Azure Portal.
-#    For more information: https://docs.microsoft.com/en-us/azure/app-service/deploy-github-actions?tabs=applevel#generate-deployment-credentials
-#
-# 2. Create a secret in your repository named AZURE_WEBAPP_PUBLISH_PROFILE, paste the publish profile contents as the value of the secret.
-#    For instructions on obtaining the publish profile see: https://docs.microsoft.com/azure/app-service/deploy-github-actions#configure-the-github-secret
-#
-# 3. Change the value for the AZURE_WEBAPP_NAME. Optionally, change the AZURE_WEBAPP_PACKAGE_PATH and NODE_VERSION environment variables below.
-#
-# For more information on GitHub Actions for Azure: https://github.com/Azure/Actions
-# For more information on the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# For more samples to get started with GitHub Action workflows to deploy to Azure: https://github.com/Azure/actions-workflow-samples
+name: Weekly Tribes India Scraper
 
 on:
-  push:
-    branches: [ "main" ][span_1](start_span)[span_1](end_span)
-  workflow_dispatch:[span_2](start_span)[span_2](end_span)
-
-env:
-  AZURE_WEBAPP_NAME: your-app-name    # set this to your application's name[span_3](start_span)[span_3](end_span)
-  AZURE_WEBAPP_PACKAGE_PATH: '.'      # set this to the path to your web app project, defaults to the repository root[span_4](start_span)[span_4](end_span)
-  NODE_VERSION: '24.x'                # updated to Node 24[span_5](start_span)[span_5](end_span)
-
-permissions:
-  contents: read[span_6](start_span)[span_6](end_span)
+  schedule:
+    # Runs every Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
-  build:
-    runs-on: ubuntu-latest[span_7](start_span)[span_7](end_span)
+  scrape:
+    runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4[span_8](start_span)[span_8](end_span)
+    - name: Check out repository
+      uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4[span_9](start_span)[span_9](end_span)
+    - name: Set up Python
+      uses: actions/setup-python@v5
       with:
-        node-version: ${{ env.NODE_VERSION }}[span_10](start_span)[span_10](end_span)
-        # cache: 'npm'  <-- Removed to prevent "Dependencies lock file is not found" error
+        python-version: '3.10'
+        cache: 'pip' # Caches dependencies automatically using requirements.txt
 
-    - name: npm install, build, and test
+    - name: Install dependencies
       run: |
-        npm install[span_11](start_span)[span_11](end_span)
-        npm run build --if-present[span_12](start_span)[span_12](end_span)
-        npm run test --if-present[span_13](start_span)[span_13](end_span)
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Upload artifact for deployment job
-      uses: actions/upload-artifact@v4[span_14](start_span)[span_14](end_span)
-      with:
-        name: node-app[span_15](start_span)[span_15](end_span)
-        path: .[span_16](start_span)[span_16](end_span)
+    - name: Run scraper script
+      run: |
+        # Replace scraper.py with the actual name/path of your Python scraping script
+        python scraper.py
 
-  deploy:
-    permissions:
-      contents: none[span_17](start_span)[span_17](end_span)
-    runs-on: ubuntu-latest[span_18](start_span)[span_18](end_span)
-    needs: build[span_19](start_span)[span_19](end_span)
-    environment:
-      name: 'Development[span_20](start_span)'[span_20](end_span)
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}[span_21](start_span)[span_21](end_span)
-
-    steps:
-    - name: Download artifact from build job
-      uses: actions/download-artifact@v4[span_22](start_span)[span_22](end_span)
-      with:
-        name: node-app[span_23](start_span)[span_23](end_span)
-
-    - name: 'Deploy to Azure WebApp'
-      id: deploy-to-webapp[span_24](start_span)[span_24](end_span)
-      uses: azure/webapps-deploy@v2[span_25](start_span)[span_25](end_span)
-      with:
-        app-name: ${{ env.AZURE_WEBAPP_NAME }}[span_26](start_span)[span_26](end_span)
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}[span_27](start_span)[span_27](end_span)
-        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}[span_28](start_span)[span_28](end_span)
+    - name: Commit and push updated dataset
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add .
+        git diff-index --quiet HEAD || git commit -m "chore: auto-update Tribes India dataset [skip ci]"
+        git push
         
