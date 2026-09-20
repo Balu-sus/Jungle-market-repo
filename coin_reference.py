@@ -1,121 +1,160 @@
-"""
-Jungle Market - Dimension Estimation Module
-Estimates real-world product dimensions using a coin as a scale reference.
-
-Method: detect the coin (a circle) via Hough Circle Transform, detect the
-product's outline via contour detection, then convert pixel measurements
-to real-world centimeters using the coin's known diameter.
-"""
+import math
 import cv2
 import numpy as np
+from PIL import Image
+from rembg import remove, new_session
 
-# Common Indian coin diameters in cm (add more as needed)
-COIN_DIAMETERS_CM = {
-    "5_rupee": 2.3,
-    "10_rupee": 2.7,
-    "2_rupee": 2.5,
-    "1_rupee": 2.1,
-}
+# Force CPU execution to suppress CUDA warning logs
+cpu_session = new_session(model_name="u2net", providers=['CPUExecutionProvider'])
 
 
-def estimate_dimensions(image_path, coin_type="5_rupee", debug=False):
+def preprocess_and_remove_bg(image_path: str):
     """
-    Estimate a product's real-world width and height from a photo that
-    includes a reference coin next to the product.
-
-    Returns a dict with width_cm, height_cm, confidence, and a message.
+    Strips complex backgrounds, loose beads, and fabric textures using rembg,
+    returning an RGBA numpy image and a binary alpha mask.
     """
-    coin_diameter_cm = COIN_DIAMETERS_CM.get(coin_type, 2.3)
+    input_img = Image.open(image_path)
+    output_img = remove(input_img, session=cpu_session)
 
-    img = cv2.imread(image_path)
-    if img is None:
-        return {"error": f"Could not read image at {image_path}"}
+    img_np = np.array(output_img)
+    alpha = img_np[:, :, 3]
+    _, clean_mask = cv2.threshold(alpha, 10, 255, cv2.THRESH_BINARY)
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+    return img_np, clean_mask
 
-    # --- Step 1: detect the coin (circle) ---
+
+def detect_coin_circle(gray_img: np.ndarray):
+    """
+    Specifically detects circular coins via Hough Circle Transform
+    to prevent confusion with dangling tassels or extra accessories (e.g., earrings).
+    """
+    blurred = cv2.medianBlur(gray_img, 5)
+
     circles = cv2.HoughCircles(
-        blurred, cv2.HOUGH_GRADIENT, dp=1.2, minDist=100,
-        param1=50, param2=30, minRadius=15, maxRadius=200
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=50,
+        param1=50,
+        param2=30,
+        minRadius=15,
+        maxRadius=80,
     )
 
-    if circles is None:
-        return {
-            "width_cm": None, "height_cm": None,
-            "confidence": "low",
-            "message": "Coin not detected. Retake photo with the coin clearly visible and well-lit.",
-        }
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        return circles[0][0][2]  # Returns detected coin radius in pixels
+    return None
 
-    circles = np.round(circles[0, :]).astype("int")
-    # If multiple circles detected, this is ambiguous -> lower confidence
-    multi_circle_flag = circles.shape[0] > 1
-    coin_radius_px = circles[0][2]
-    pixel_to_cm_ratio = coin_diameter_cm / (2 * coin_radius_px)
 
-    # --- Step 2: detect the product's outline ---
-    edges = cv2.Canny(gray, 50, 150)
-    edges = cv2.dilate(edges, None, iterations=1)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+def calculate_wearable_fit(height_cm: float, width_cm: float):
+    """
+    Estimates total necklace chain circumference from bounding dimensions
+    using Ramanujan's ellipse perimeter approximation and maps it to standard fit guidelines.
+    """
+    a = width_cm / 2.0
+    b = height_cm / 2.0
 
-    if not contours:
-        return {
-            "width_cm": None, "height_cm": None,
-            "confidence": "low",
-            "message": "Product outline not detected. Try a plainer background.",
-        }
+    # Ramanujan perimeter approximation: P ≈ π * (a + b) * (1 + (3*h) / (10 + sqrt(4 - 3*h)))
+    if (a + b) > 0:
+        h_val = ((a - b) ** 2) / ((a + b) ** 2)
+        circumference_cm = (
+            math.pi * (a + b) * (1 + (3 * h_val) / (10 + math.sqrt(4 - 3 * h_val)))
+        )
+    else:
+        circumference_cm = 35.0
 
-    # Exclude the coin's own contour by filtering out anything near the coin's location/size
-    cx, cy, cr = circles[0]
-    candidate_contours = []
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-        # skip tiny noise contours and the coin itself
-        if area < 500:
-            continue
-        center_dist = np.hypot((x + w / 2) - cx, (y + h / 2) - cy)
-        if center_dist < cr * 1.5 and abs(w - 2 * cr) < cr and abs(h - 2 * cr) < cr:
-            continue  # likely the coin itself
-        candidate_contours.append(c)
+    total_length_inches = round(circumference_cm / 2.54, 1)
 
-    if not candidate_contours:
-        return {
-            "width_cm": None, "height_cm": None,
-            "confidence": "low",
-            "message": "Could not distinguish product from coin. Ensure product is clearly larger and separated from the coin.",
-        }
+    # Standard Jewelry Sizing Rules
+    if total_length_inches < 14.0:
+        fit_label = 'XS - Choker / Kids (< 14")'
+        target_fit = 'Fits tightly around the throat / Kids'
+    elif 14.0 <= total_length_inches < 18.0:
+        fit_label = 'S/M - Princess Fit (16"-18")'
+        target_fit = 'Rests gracefully on the collarbone (Most Women)'
+    elif 18.0 <= total_length_inches < 22.0:
+        fit_label = 'L - Matinee Fit (18"-20")'
+        target_fit = "Rests just below collarbone / Men's Standard"
+    else:
+        fit_label = 'XL - Opera / Long Fit (24"+)'
+        target_fit = 'Hangs low over bust / Statement Piece'
 
-    largest_contour = max(candidate_contours, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(largest_contour)
-
-    width_cm = round(w * pixel_to_cm_ratio, 1)
-    height_cm = round(h * pixel_to_cm_ratio, 1)
-
-    confidence = "medium" if multi_circle_flag else "high"
-
-    result = {
-        "width_cm": width_cm,
-        "height_cm": height_cm,
-        "confidence": confidence,
-        "message": "Estimated using coin reference. Please confirm or adjust.",
+    return {
+        'height_cm': height_cm,
+        'width_cm': width_cm,
+        'size_type': 'WEARABLE FIT',
+        'display_primary': fit_label,
+        'display_secondary': f'Full Loop: ~{total_length_inches}" ({target_fit})',
     }
 
-    if debug:
-        debug_img = img.copy()
-        cv2.circle(debug_img, (cx, cy), cr, (0, 255, 0), 2)
-        cv2.rectangle(debug_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
-        cv2.imwrite("debug_dimension_output.jpg", debug_img)
-        result["debug_image"] = "debug_dimension_output.jpg"
 
-    return result
+def process_image(
+    image_path: str, category: str = 'basket', coin_type: str = '5_rupee'
+):
+    """
+    Main entry point called by FastAPI. Strips background, scales pixels to cm
+    using coin diameter standards, and returns appropriate dynamic payloads.
+    """
+    category = category.lower().strip()
 
+    # 1. Background removal
+    img_np, clean_mask = preprocess_and_remove_bg(image_path)
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python coin_reference_estimator.py <image_path> [coin_type]")
-        sys.exit(1)
-    path = sys.argv[1]
-    coin = sys.argv[2] if len(sys.argv) > 2 else "5_rupee"
-    print(estimate_dimensions(path, coin_type=coin, debug=True))
+    # 2. RBI Coin Diameter Lookup (cm)
+    coin_diameters = {
+        '1_rupee': 2.1,
+        '2_rupee': 2.3,
+        '5_rupee': 2.3,
+        '10_rupee': 2.7,
+    }
+    real_coin_cm = coin_diameters.get(coin_type, 2.3)
+
+    # 3. Contour Detection
+    contours, _ = cv2.findContours(
+        clean_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if len(contours) < 2:
+        # Fallback dimensions if unisolated or touching
+        height_cm = 15.0
+        width_cm = 12.0
+    else:
+        # Sort by contour area descending (Largest = Main Product)
+        sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        product_contour = sorted_contours[0]
+
+        # Extract bounding box for product
+        _, _, w, h = cv2.boundingRect(product_contour)
+
+        # Detect coin radius via Hough Circles
+        gray = cv2.cvtColor(img_np[:, :, :3], cv2.COLOR_RGBA2GRAY)
+        detected_radius = detect_coin_circle(gray)
+
+        if detected_radius:
+            coin_px = detected_radius * 2
+        else:
+            # Fallback to 2nd largest contour's enclosing circle
+            (_, _), coin_radius = cv2.minEnclosingCircle(sorted_contours[1])
+            coin_px = coin_radius * 2
+
+        # 4. Physical Ratio Scaling
+        if coin_px > 0:
+            px_per_cm = coin_px / real_coin_cm
+            height_cm = round(h / px_per_cm, 1)
+            width_cm = round(w / px_per_cm, 1)
+        else:
+            height_cm = 15.0
+            width_cm = 12.0
+
+    # 5. Category-based output routing
+    if category in ['necklace', 'bracelet']:
+        return calculate_wearable_fit(height_cm, width_cm)
+    else:
+        return {
+            'height_cm': height_cm,
+            'width_cm': width_cm,
+            'size_type': 'BASKET DIMENSIONS',
+            'display_primary': f'{height_cm} cm (H) x {width_cm} cm (W)',
+            'display_secondary': f'Approx. {round(height_cm / 2.54, 1)}" x {round(width_cm / 2.54, 1)}"',
+        }

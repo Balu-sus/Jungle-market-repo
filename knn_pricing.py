@@ -5,9 +5,32 @@ similar products in the seed dataset (sourced from Tribes India / TRIFED).
 """
 import pandas as pd
 import numpy as np
+from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
+class DynamicKNNPricer:
+    def __init__(self, db_connection=None):
+        self.model = KNeighborsRegressor(n_neighbors=3, weights='distance')
+        self.is_trained = False
+        
+    def train_or_update(self, df):
+        """
+        Trains or updates the model using existing + newly added database entries.
+        Expected columns: ['category_code', 'height_cm', 'width_cm', 'price']
+        """
+        X = df[['category_code', 'height_cm', 'width_cm']]
+        y = df['price']
+        self.model.fit(X, y)
+        self.is_trained = True
 
+    def predict_price(self, category_code, height, width, fallback_price=500):
+        if not self.is_trained:
+            return fallback_price
+        
+        predicted = self.model.predict([[category_code, height, width]])
+        return int(round(predicted[0], -1)) # Round to nearest 10
+
+    
 class PricingModel:
     def __init__(self, dataset_path, k=5):
         self.k = k

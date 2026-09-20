@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jungle Market - Artisan Product & Pricing AI</title>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 32px; border-radius: 16px; width: 420px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
+        h2 { margin: 0; color: #fbbf24; font-size: 24px; text-align: center; }
+        p.subtitle { margin: 4px 0 24px 0; color: #94a3b8; font-size: 14px; text-align: center; }
+        label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; }
+        select, input, button { width: 100%; box-sizing: border-box; margin-bottom: 16px; padding: 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: white; font-size: 14px; }
+        button { background: #fbbf24; color: #0f172a; font-weight: bold; border: none; cursor: pointer; margin-top: 8px; transition: background 0.2s; }
+        button:hover { background: #f59e0b; }
+        .result { margin-top: 24px; padding: 16px; background: #0f172a; border-radius: 12px; border: 1px solid #334155; text-align: center; }
+        .badge { background: #334155; color: #fbbf24; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-bottom: 8px; }
+        .price { font-size: 28px; font-weight: bold; color: #34d399; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Jungle Market</h2>
+        <p class="subtitle">Artisan Product & Pricing AI</p>
+        <form id="uploadForm">
+            <label>Product Category</label>
+            <select name="category">
+                <option value="auto">✨ Auto-Detect (CLIP AI)</option>
+                <option value="necklace">Necklace</option>
+                <option value="bracelet">Bracelet</option>
+                <option value="basket">Basket</option>
+                <option value="tray">Tray</option>
+            </select>
+
+            <label>Reference Coin</label>
+            <select name="coin_type">
+                <option value="5_rupee">5 Rupee Coin (2.3 cm)</option>
+                <option value="1_rupee">1 Rupee Coin (2.1 cm)</option>
+                <option value="2_rupee">2 Rupee Coin (2.3 cm)</option>
+                <option value="10_rupee">10 Rupee Coin (2.7 cm)</option>
+            </select>
+
+            <label>Product Photo</label>
+            <input type="file" name="file" accept="image/*" required />
+
+            <button type="submit" id="btn">Analyze Product</button>
+        </form>
+
+        <div id="output" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btn');
+            const output = document.getElementById('output');
+            
+            btn.disabled = true;
+            btn.innerText = "Analyzing...";
+            output.style.display = 'none';
+
+            const formData = new FormData(e.target);
+            try {
+                const res = await fetch('/process-handicraft/', { method: 'POST', body: formData });
+                const data = await res.json();
+                
+                output.style.display = 'block';
+                if (data.success) {
+                    const dims = data.dimensions;
+                    output.innerHTML = `
+                        <div class="badge">${dims.size_type || 'ANALYSIS COMPLETE'}</div>
+                        <h3 style="margin:4px 0;">Category: ${data.category.toUpperCase()}</h3>
+                        <p style="margin:4px 0; font-size: 16px; font-weight: bold;">${dims.display_primary}</p>
+                        <p style="margin:4px 0; font-size: 13px; color: #94a3b8;">${dims.display_secondary}</p>
+                        <div class="price">₹${data.suggested_price}</div>
+                    `;
+                } else {
+                    output.innerHTML = `<p style="color:#ef4444;">Error processing image.</p>`;
+                }
+            } catch (err) {
+                output.style.display = 'block';
+                output.innerHTML = `<p style="color:#ef4444;">Server error: ${err.message}</p>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Analyze Product";
+            }
+        });
+    </script>
+</body>
+</html>
